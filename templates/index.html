@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kokoro TTS - Web UI</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 40px;
+        }
+
+        h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+            text-align: center;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 600;
+            font-size: 0.95em;
+        }
+
+        textarea {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 16px;
+            font-family: inherit;
+            resize: vertical;
+            min-height: 120px;
+            transition: border-color 0.3s;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        select, input[type="number"] {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 16px;
+            background: white;
+            cursor: pointer;
+            transition: border-color 0.3s;
+        }
+
+        select:focus, input[type="number"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        button {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-top: 10px;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .audio-player {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f5f5f5;
+            border-radius: 10px;
+            display: none;
+        }
+
+        .audio-player.show {
+            display: block;
+        }
+
+        audio {
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        .loading {
+            text-align: center;
+            color: #667eea;
+            font-weight: 600;
+            margin-top: 20px;
+            display: none;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: #fee;
+            color: #c33;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+            display: none;
+        }
+
+        .error.show {
+            display: block;
+        }
+
+        .voice-info {
+            font-size: 0.85em;
+            color: #666;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎙️ Kokoro TTS</h1>
+        <p class="subtitle">Convert text to natural-sounding speech</p>
+
+        <form id="ttsForm">
+            <div class="form-group">
+                <label for="text">Enter Text:</label>
+                <textarea 
+                    id="text" 
+                    name="text" 
+                    placeholder="Type or paste your text here..."
+                    required
+                >Hello! Welcome to Kokoro TTS. This is a test of the text-to-speech system.</textarea>
+            </div>
+
+            <div class="controls">
+                <div class="form-group">
+                    <label for="voice">Voice:</label>
+                    <select id="voice" name="voice">
+                        {% for voice in voices %}
+                        <option value="{{ voice }}" {% if voice == 'af_nicole' %}selected{% endif %}>
+                            {{ voice }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <div class="voice-info">Choose from {{ voices|length }} available voices</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="language">Language:</label>
+                    <select id="language" name="language">
+                        {% for lang in languages %}
+                        <option value="{{ lang }}" {% if lang == 'en-us' %}selected{% endif %}>
+                            {{ lang|upper }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="speed">Speed: <span id="speedValue">1.0</span>x</label>
+                <input 
+                    type="range" 
+                    id="speed" 
+                    name="speed" 
+                    min="0.5" 
+                    max="2.0" 
+                    step="0.1" 
+                    value="1.0"
+                    style="width: 100%;"
+                >
+            </div>
+
+            <button type="submit" id="generateBtn">Generate Speech 🔊</button>
+        </form>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            Generating audio...
+        </div>
+
+        <div class="error" id="error"></div>
+
+        <div class="audio-player" id="audioPlayer">
+            <h3>Generated Audio:</h3>
+            <audio id="audio" controls></audio>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('ttsForm');
+        const speedInput = document.getElementById('speed');
+        const speedValue = document.getElementById('speedValue');
+        const loading = document.getElementById('loading');
+        const audioPlayer = document.getElementById('audioPlayer');
+        const audio = document.getElementById('audio');
+        const errorDiv = document.getElementById('error');
+        const generateBtn = document.getElementById('generateBtn');
+
+        // Update speed display
+        speedInput.addEventListener('input', (e) => {
+            speedValue.textContent = e.target.value;
+        });
+
+        // Handle form submission
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const text = document.getElementById('text').value;
+            const voice = document.getElementById('voice').value;
+            const language = document.getElementById('language').value;
+            const speed = speedInput.value;
+
+            // Hide previous results
+            audioPlayer.classList.remove('show');
+            errorDiv.classList.remove('show');
+            loading.classList.add('show');
+            generateBtn.disabled = true;
+
+            try {
+                const response = await fetch('/synthesize', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        text: text,
+                        voice: voice,
+                        language: language,
+                        speed: parseFloat(speed)
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to generate audio');
+                }
+
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                
+                audio.src = url;
+                audioPlayer.classList.add('show');
+                audio.play();
+
+            } catch (error) {
+                errorDiv.textContent = 'Error: ' + error.message;
+                errorDiv.classList.add('show');
+            } finally {
+                loading.classList.remove('show');
+                generateBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
