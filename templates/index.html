@@ -240,6 +240,44 @@
                 >
             </div>
 
+            <div class="form-group" style="margin-top: 10px;">
+                <label>
+                    <input type="checkbox" id="chunking" name="chunking" checked>
+                    Enable low-latency chunking
+                </label>
+                <div class="voice-info">Chunks sentence groups for faster first audio; cross-fade smooths boundaries.</div>
+            </div>
+
+            <div class="controls" style="margin-top: 10px;">
+                <div class="form-group">
+                    <label for="chunkChars">Chunk size (chars):</label>
+                    <input type="number" id="chunkChars" name="chunkChars" min="80" max="600" step="20" value="240">
+                </div>
+                <div class="form-group">
+                    <label for="chunkOverlap">Cross-fade overlap (ms):</label>
+                    <input type="number" id="chunkOverlap" name="chunkOverlap" min="0" max="200" step="10" value="60">
+                </div>
+            </div>
+
+            <div class="controls" style="margin-top: 10px;">
+                <div class="form-group">
+                    <label for="chunkWorkers">Pipeline workers (threads):</label>
+                    <input type="number" id="chunkWorkers" name="chunkWorkers" min="1" max="8" step="1" value="3">
+                </div>
+                <div class="form-group">
+                    <label for="chunkPrefetch">Prefetch queue:</label>
+                    <input type="number" id="chunkPrefetch" name="chunkPrefetch" min="1" max="8" step="1" value="2">
+                </div>
+            </div>
+
+            <div class="form-group" style="margin-top: 10px;">
+                <label>
+                    <input type="checkbox" id="streaming" name="streaming">
+                    Stream sentence-by-sentence (lowest perceived latency)
+                </label>
+                <div class="voice-info">Starts playback as soon as the first sentence is ready.</div>
+            </div>
+
             <button type="submit" id="generateBtn">Generate Speech 🔊</button>
         </form>
 
@@ -265,6 +303,10 @@
         const audio = document.getElementById('audio');
         const errorDiv = document.getElementById('error');
         const generateBtn = document.getElementById('generateBtn');
+        const streamingToggle = document.getElementById('streaming');
+        let audioCtx = null;
+        let playHead = 0; // seconds scheduled into AudioContext
+        const overlapCrossfadeSec = 0.06; // 60ms cross-fade between streamed chunks
 
         // Update speed display
         speedInput.addEventListener('input', (e) => {
@@ -287,18 +329,28 @@
             generateBtn.disabled = true;
 
             try {
-                const response = await fetch('/synthesize', {
+                const payload = {
+                    text: text,
+                    voice: voice,
+                    language: language,
+                    speed: parseFloat(speed),
+                    chunking: document.getElementById('chunking').checked,
+                    chunk_chars: parseInt(document.getElementById('chunkChars').value, 10),
+                    chunk_overlap_ms: parseInt(document.getElementById('chunkOverlap').value, 10),
+                    chunk_workers: parseInt(document.getElementById('chunkWorkers').value, 10),
+                    chunk_prefetch: parseInt(document.getElementById('chunkPrefetch').value, 10)
+                };
+
+                if (streamingToggle.checked) {
+                    await streamPlay('/synthesize-stream', payload);
+                } else {
+                    const response = await fetch('/synthesize', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({
-                        text: text,
-                        voice: voice,
-                        language: language,
-                        speed: parseFloat(speed)
-                    })
-                });
+                        body: JSON.stringify(payload)
+                    });
 
                 if (!response.ok) {
                     const error = await response.json();
@@ -311,6 +363,7 @@
                 audio.src = url;
                 audioPlayer.classList.add('show');
                 audio.play();
+                }
 
             } catch (error) {
                 errorDiv.textContent = 'Error: ' + error.message;
@@ -320,6 +373,80 @@
                 generateBtn.disabled = false;
             }
         });
+
+        async function streamPlay(endpoint, payload) {
+            // Initialize AudioContext lazily
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            playHead = audioCtx.currentTime + 0.05; // small lead time
+
+            const resp = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!resp.body) {
+                throw new Error('Streaming response not supported by browser');
+            }
+
+            // Prepare UI for playback via WebAudio
+            audioPlayer.classList.add('show');
+            audio.removeAttribute('src');
+
+            const reader = resp.body.getReader();
+            let buffer = new Uint8Array(0);
+            let streamSampleRate = 0;
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                if (!value) continue;
+                // Append to buffer
+                const incoming = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+                const merged = new Uint8Array(buffer.length + incoming.length);
+                merged.set(buffer, 0);
+                merged.set(incoming, buffer.length);
+                buffer = merged;
+
+                // Parse framed chunks: 'KOPC' + 4-byte SR + 4-byte LEN + PCM float32 LE
+                while (buffer.length >= 12) {
+                    const m0 = buffer[0], m1 = buffer[1], m2 = buffer[2], m3 = buffer[3];
+                    if (m0 !== 0x4b || m1 !== 0x4f || m2 !== 0x50 || m3 !== 0x43) { // 'KOPC'
+                        // If stream desyncs, drop one byte and resync
+                        buffer = buffer.slice(1);
+                        continue;
+                    }
+                    const sr = (buffer[4] << 24) | (buffer[5] << 16) | (buffer[6] << 8) | buffer[7];
+                    const length = (buffer[8] << 24) | (buffer[9] << 16) | (buffer[10] << 8) | buffer[11];
+                    if (buffer.length < 12 + length) break; // wait for full payload
+                    const payload = buffer.slice(12, 12 + length);
+                    buffer = buffer.slice(12 + length);
+                    if (sr > 0) streamSampleRate = sr;
+
+                    if (length > 0 && streamSampleRate > 0) {
+                        // Interpret payload as Float32 little-endian PCM
+                        const f32 = new Float32Array(payload.buffer, payload.byteOffset, payload.byteLength / 4);
+                        const buf = audioCtx.createBuffer(1, f32.length, streamSampleRate);
+                        buf.getChannelData(0).set(f32);
+                        const src = audioCtx.createBufferSource();
+                        src.buffer = buf;
+                        const gain = audioCtx.createGain();
+                        src.connect(gain);
+                        gain.connect(audioCtx.destination);
+
+                        const startTime = Math.max(audioCtx.currentTime + 0.02, playHead - overlapCrossfadeSec);
+                        const endTime = startTime + (f32.length / streamSampleRate);
+                        gain.gain.setValueAtTime(0.0, startTime);
+                        gain.gain.linearRampToValueAtTime(1.0, startTime + overlapCrossfadeSec);
+                        gain.gain.setValueAtTime(1.0, endTime - overlapCrossfadeSec);
+                        gain.gain.linearRampToValueAtTime(0.0, endTime);
+                        src.start(startTime);
+                        playHead = endTime;
+                    }
+                }
+            }
+        }
     </script>
 </body>
 </html>
