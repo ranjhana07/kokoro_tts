@@ -16,6 +16,11 @@ import numpy as np
 
 app = Flask(__name__)
 
+# Performance tuning: set thread env vars before heavy libs fully initialize
+os.environ.setdefault("OMP_NUM_THREADS", str(os.cpu_count() or 4))
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
 # Chunking configuration
 MAX_TEXT_LENGTH = 5000
 CHUNK_CHAR_LIMIT = 240
@@ -35,12 +40,32 @@ if not os.path.exists(MODEL_PATH) or not os.path.exists(VOICES_PATH):
 # Initialize model once at startup
 model = Kokoro(MODEL_PATH, VOICES_PATH)
 
+# Warm up the pipeline to reduce first-chunk latency
+def _warmup_model():
+    try:
+        warm_texts = {
+            "en-us": "Hello.",
+            "en-gb": "Hello.",
+            "fr-fr": "Bonjour.",
+            "it": "Ciao.",
+            "ja": "こんにちは。",
+            "cmn": "你好。",
+        }
+        for lang, txt in warm_texts.items():
+            # Use a common voice to prime phonemizer, runtime, and decoder
+            model.create(txt, voice="af_nicole", lang=lang, speed=1.0)
+    except Exception:
+        # Warmup best-effort; ignore failures
+        pass
+
+threading.Thread(target=_warmup_model, daemon=True).start()
+
 def split_into_sentences(text):
     import re
     sentences = re.split(r'(?<=[.!?])\s+', text.strip())
     return [s.strip() for s in sentences if s.strip()]
 
-def split_for_streaming(text, max_chars=180):
+def split_for_streaming(text, max_chars=140):
     """Finer-grained chunks for streaming to reduce per-chunk latency.
     - Start with sentence split
     - Further split long sentences by commas/semicolons/colon
@@ -151,7 +176,7 @@ def synthesize_stream():
             return jsonify({'error': f'Text too long. Maximum {MAX_TEXT_LENGTH} characters.'}), 400
 
         # Smaller chunks for lower per-chunk latency
-        max_chars = int((request.json or {}).get('stream_chunk_chars', 180))
+        max_chars = int((request.json or {}).get('stream_chunk_chars', 140))
         chunks = split_for_streaming(text, max_chars=max_chars)
 
         def generate():
