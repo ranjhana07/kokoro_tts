@@ -317,4 +317,5 @@ def synthesize():
 if __name__ == '__main__':
     print("Starting Kokoro TTS Web UI...")
     print("Open your browser at http://localhost:5000")
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # Run without debug/reloader to avoid Windows watchdog restarts and WinError 10038 on shutdown
+    app.run(debug=False, use_reloader=False, host='0.0.0.0', port=5000)

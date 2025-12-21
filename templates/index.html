@@ -288,6 +288,10 @@
 
         <div class="error" id="error"></div>
 
+        <div id="metrics" class="voice-info" style="margin-top: 10px; display: none;">
+            First chunk: <span id="firstChunkMs">–</span> ms
+        </div>
+
         <div class="audio-player" id="audioPlayer">
             <h3>Generated Audio:</h3>
             <audio id="audio" controls></audio>
@@ -304,6 +308,8 @@
         const errorDiv = document.getElementById('error');
         const generateBtn = document.getElementById('generateBtn');
         const streamingToggle = document.getElementById('streaming');
+        const metricsDiv = document.getElementById('metrics');
+        const firstChunkMsEl = document.getElementById('firstChunkMs');
         let audioCtx = null;
         let playHead = 0; // seconds scheduled into AudioContext
         const overlapCrossfadeSec = 0.06; // 60ms cross-fade between streamed chunks
@@ -327,6 +333,8 @@
             errorDiv.classList.remove('show');
             loading.classList.add('show');
             generateBtn.disabled = true;
+            metricsDiv.style.display = 'none';
+            firstChunkMsEl.textContent = '–';
 
             try {
                 const payload = {
@@ -381,6 +389,9 @@
             }
             playHead = audioCtx.currentTime + 0.05; // small lead time
 
+            const t0 = performance.now();
+            let firstReported = false;
+
             const resp = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -425,6 +436,12 @@
                     if (sr > 0) streamSampleRate = sr;
 
                     if (length > 0 && streamSampleRate > 0) {
+                        if (!firstReported) {
+                            const dt = Math.round(performance.now() - t0);
+                            firstChunkMsEl.textContent = String(dt);
+                            metricsDiv.style.display = 'block';
+                            firstReported = true;
+                        }
                         // Interpret payload as Float32 little-endian PCM
                         const f32 = new Float32Array(payload.buffer, payload.byteOffset, payload.byteLength / 4);
                         const buf = audioCtx.createBuffer(1, f32.length, streamSampleRate);
