@@ -9,6 +9,7 @@ on:
 
 jobs:
   mirror_to_gitlab:
+    if: ${{ secrets.GITLAB_SSH_PRIVATE_KEY != '' && secrets.GITLAB_REPO_URL != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -31,6 +32,7 @@ jobs:
           git push --force ${TARGET_URL} 'refs/heads/*:refs/heads/*' 'refs/tags/*:refs/tags/*'
   
   mirror_to_gitea:
+    if: ${{ secrets.GITEA_SSH_PRIVATE_KEY != '' && secrets.GITEA_REPO_URL != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -53,6 +55,7 @@ jobs:
           git push --force ${TARGET_URL} 'refs/heads/*:refs/heads/*' 'refs/tags/*:refs/tags/*' 
 
   mirror_to_codeberg:
+    if: ${{ secrets.CODEBERG_SSH_PRIVATE_KEY != '' && secrets.CODEBERG_REPO_URL != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
